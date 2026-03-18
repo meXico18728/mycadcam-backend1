@@ -1,0 +1,75 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id               Int      @id @default(autoincrement())
+  role             String   // "admin", "doctor", "tech", "accountant"
+  name             String
+  emailOrPhone     String   @unique
+  passwordHash     String
+  themePreference  String   @default("light")
+  casesAsDoctor    Case[]   @relation("DoctorCases")
+  casesAsTech      Case[]   @relation("TechCases")
+}
+
+model Patient {
+  id        Int      @id @default(autoincrement())
+  name      String
+  phone        String        @unique
+  cases        Case[]
+  transactions Transaction[]
+}
+
+model Case {
+  id             Int          @id @default(autoincrement())
+  patientId      Int
+  patient        Patient      @relation(fields: [patientId], references: [id])
+  doctorId       Int?
+  doctor         User?        @relation("DoctorCases", fields: [doctorId], references: [id])
+  techId         Int?
+  tech           User?        @relation("TechCases", fields: [techId], references: [id])
+  status         String       // "new", "modeling", "processing", "ready"
+  statusChangedAt DateTime     @default(now())
+  toothFormula   String       // JSON string representation of teeth
+  totalCost      Float        @default(0)
+  paidAmount     Float        @default(0)  // Сколько уже оплачено
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  attachments    Attachment[]
+  transactions   Transaction[]
+}
+
+model Transaction {
+  id          Int      @id @default(autoincrement())
+  caseId      Int?     // Может быть привязано к конкретному заказу, если это оплата заказа
+  case        Case?    @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  patientId   Int?     // Новое поле: привязка к пациенту (клинике/заказчику)
+  patient     Patient? @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  type        String   // "income", "expense"
+  amountUSD   Float    @default(0)
+  amountUZS   Float    @default(0)
+  description String?  // Описание (например, "Оплата от клиники Дент", "Закупка циркония")
+  date        DateTime @default(now())
+}
+
+model Attachment {
+  id          Int      @id @default(autoincrement())
+  caseId      Int
+  case        Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  filePath    String
+  type        String   // "stl", "image"
+  uploadedAt  DateTime @default(now())
+}
+
+model RestorationType {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  priceUSD    Float    @default(0)
+  createdAt   DateTime @default(now())
+}
