@@ -1,20 +1,11 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const { PrismaClient } = require('@prisma/client');
-const authRoutes = require('./routes/auth');
-const patientsRoutes = require('./routes/patients');
-const casesRoutes = require('./routes/cases');
-const uploadRoutes = require('./routes/upload');
-const restorationsRoutes = require('./routes/restorations');
-const financesRoutes = require('./routes/finances');
-const usersRoutes = require('./routes/users');
 const path = require('path');
 
 dotenv.config();
 
 const app = express();
-const prisma = new PrismaClient({});
 const PORT = process.env.PORT || 4000;
 
 app.use(cors({
@@ -24,24 +15,23 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Basic health check
+// Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date() });
 });
 
-// Serve static files
+// Static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/patients', patientsRoutes);
-app.use('/api/cases', casesRoutes);
-app.use('/api/upload', uploadRoutes);
-app.use('/api/restorations', restorationsRoutes);
-app.use('/api/finances', financesRoutes);
-app.use('/api/users', usersRoutes);
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/patients', require('./routes/patients'));
+app.use('/api/cases', require('./routes/cases'));
+app.use('/api/upload', require('./routes/upload'));
+app.use('/api/restorations', require('./routes/restorations'));
+app.use('/api/finances', require('./routes/finances'));
+app.use('/api/users', require('./routes/users'));
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
 });
