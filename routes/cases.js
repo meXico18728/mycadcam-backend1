@@ -58,13 +58,14 @@ router.get('/:id', authenticateToken, async (req, res) => {
 // Создать новый кейс
 router.post('/', authenticateToken, async (req, res) => {
     try {
-        const { patientId, toothFormula, totalCost, status } = req.body;
+        const { patientId, toothFormula, totalCost, status, dueDate } = req.body;
         const newCase = await prisma.case.create({
             data: {
                 patientId,
                 toothFormula,
                 totalCost,
                 status: status || 'new',
+                dueDate: dueDate ? new Date(dueDate) : null,
                 doctorId: req.user?.userId || null
             }
         });

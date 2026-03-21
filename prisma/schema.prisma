@@ -34,8 +34,9 @@ model Case {
   doctor         User?        @relation("DoctorCases", fields: [doctorId], references: [id])
   techId         Int?
   tech           User?        @relation("TechCases", fields: [techId], references: [id])
-  status         String       // "new", "modeling", "processing", "ready"
+  status         String       // "new", "modeling", "milling", "sintering", "fitting", "ready"
   statusChangedAt DateTime     @default(now())
+  dueDate        DateTime?
   toothFormula   String       // JSON string representation of teeth
   totalCost      Float        @default(0)
   paidAmount     Float        @default(0)  // Сколько уже оплачено
