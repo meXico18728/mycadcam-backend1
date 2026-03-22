@@ -1,11 +1,9 @@
 const express = require('express');
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../lib/prisma'); // BUG FIX #1: singleton
 const authenticateToken = require('../middleware/auth');
 
 const router = express.Router();
-const prisma = new PrismaClient();
 
-// Проверка прав доступа для финансов
 const requireFinanceAccess = (req, res, next) => {
     if (!['admin', 'accountant', 'doctor'].includes(req.user.role)) {
         return res.status(403).json({ error: 'Доступ запрещен' });
@@ -13,18 +11,13 @@ const requireFinanceAccess = (req, res, next) => {
     next();
 };
 
-// 1. Получить все транзакции (опционально с фильтрацией по датам)
+// Получить все транзакции
 router.get('/', authenticateToken, requireFinanceAccess, async (req, res) => {
     try {
         const transactions = await prisma.transaction.findMany({
             orderBy: { date: 'desc' },
             include: {
-                case: {
-                    include: {
-                        patient: true,
-                        doctor: true
-                    }
-                },
+                case: { include: { patient: true, doctor: true } },
                 patient: true
             }
         });
@@ -35,26 +28,18 @@ router.get('/', authenticateToken, requireFinanceAccess, async (req, res) => {
     }
 });
 
-// 2. Получить общую статистику (Баланс, Доходы, Расходы)
+// Статистика
 router.get('/stats', authenticateToken, requireFinanceAccess, async (req, res) => {
     try {
         const result = await prisma.transaction.groupBy({
             by: ['type'],
-            _sum: {
-                amountUSD: true,
-                amountUZS: true
-            }
+            _sum: { amountUSD: true, amountUZS: true }
         });
-
         const stats = {
-            totalIncomeUSD: 0,
-            totalIncomeUZS: 0,
-            totalExpenseUSD: 0,
-            totalExpenseUZS: 0,
-            balanceUSD: 0,
-            balanceUZS: 0
+            totalIncomeUSD: 0, totalIncomeUZS: 0,
+            totalExpenseUSD: 0, totalExpenseUZS: 0,
+            balanceUSD: 0, balanceUZS: 0
         };
-
         result.forEach(group => {
             if (group.type === 'income') {
                 stats.totalIncomeUSD = group._sum.amountUSD || 0;
@@ -64,10 +49,8 @@ router.get('/stats', authenticateToken, requireFinanceAccess, async (req, res) =
                 stats.totalExpenseUZS = group._sum.amountUZS || 0;
             }
         });
-
         stats.balanceUSD = stats.totalIncomeUSD - stats.totalExpenseUSD;
         stats.balanceUZS = stats.totalIncomeUZS - stats.totalExpenseUZS;
-
         res.json(stats);
     } catch (error) {
         console.error(error);
@@ -75,12 +58,15 @@ router.get('/stats', authenticateToken, requireFinanceAccess, async (req, res) =
     }
 });
 
-// 3. Создать транзакцию (доход или расход)
+// Создать транзакцию
 router.post('/', authenticateToken, requireFinanceAccess, async (req, res) => {
     const { type, amountUSD, amountUZS, description, caseId, patientId, date } = req.body;
 
     if (!type || (amountUSD === undefined && amountUZS === undefined)) {
         return res.status(400).json({ error: 'Тип и сумма обязательны' });
+    }
+    if (!['income', 'expense'].includes(type)) {
+        return res.status(400).json({ error: 'Тип должен быть income или expense' });
     }
 
     try {
@@ -89,9 +75,7 @@ router.post('/', authenticateToken, requireFinanceAccess, async (req, res) => {
 
         if (parsedCaseId && !actualPatientId) {
             const existingCase = await prisma.case.findUnique({ where: { id: parsedCaseId } });
-            if (existingCase) {
-                actualPatientId = existingCase.patientId;
-            }
+            if (existingCase) actualPatientId = existingCase.patientId;
         }
 
         const transaction = await prisma.transaction.create({
@@ -106,50 +90,38 @@ router.post('/', authenticateToken, requireFinanceAccess, async (req, res) => {
             }
         });
 
-        // 1. Оплата за конкретный заказ (уже обновляет paidAmount сразу)
-        if (parsedCaseId && type === 'income') {
-            await prisma.case.update({
-                where: { id: parsedCaseId },
-                data: {
-                    paidAmount: {
-                        increment: parseFloat(amountUSD) || 0
-                    }
-                }
-            });
-        }
+        // BUG FIX #6: Removed double paidAmount increment on Case model.
+        // The GET endpoints recalculate paidAmount from transactions on every read,
+        // so incrementing the stored field separately caused it to drift out of sync.
+        // Now paidAmount on Case is only updated via the distribution logic below,
+        // and display always recalculates from transactions.
 
-        // 2. Оплата от пациента (клиники) без привязки к конкретному кейсу - распределяем по всем его долгам от старых к новым
+        // BUG FIX #7: distribute unpaid amount using actualPatientId (was using parseInt(patientId)
+        // which would be NaN when patientId was derived from the case)
         if (actualPatientId && !parsedCaseId && type === 'income') {
             let remainingAmount = parseFloat(amountUSD) || 0;
             if (remainingAmount > 0) {
-                // Ищем все заказы пациента, сортируем по дате создания
                 const allPatientCases = await prisma.case.findMany({
-                    where: {
-                        patientId: parseInt(patientId)
-                    },
-                    orderBy: {
-                        createdAt: 'asc'
-                    }
+                    where: { patientId: actualPatientId },
+                    orderBy: { createdAt: 'asc' }
                 });
-
-                // Выбираем только те, где paidAmount < totalCost
-                const unpaidCases = allPatientCases.filter(c => (c.paidAmount || 0) < c.totalCost);
-
+                // Recalculate paidAmount from transactions for accuracy
+                const casesWithPaid = await Promise.all(allPatientCases.map(async c => {
+                    const txSum = await prisma.transaction.aggregate({
+                        where: { caseId: c.id, type: 'income' },
+                        _sum: { amountUSD: true }
+                    });
+                    return { ...c, realPaid: txSum._sum.amountUSD || 0 };
+                }));
+                const unpaidCases = casesWithPaid.filter(c => c.realPaid < c.totalCost);
                 for (const c of unpaidCases) {
                     if (remainingAmount <= 0) break;
-
-                    const debt = c.totalCost - c.paidAmount;
+                    const debt = c.totalCost - c.realPaid;
                     const paymentForThisCase = Math.min(debt, remainingAmount);
-
                     await prisma.case.update({
                         where: { id: c.id },
-                        data: {
-                            paidAmount: {
-                                increment: paymentForThisCase
-                            }
-                        }
+                        data: { paidAmount: { increment: paymentForThisCase } }
                     });
-
                     remainingAmount -= paymentForThisCase;
                 }
             }

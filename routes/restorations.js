@@ -1,14 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma'); // BUG FIX #1: singleton
+const authenticateToken = require('../middleware/auth');
 
-// Получить все типы реставраций
-router.get('/', async (req, res) => {
+// BUG FIX #5: All routes were missing authenticateToken - unauthenticated users could read/write/delete
+
+router.get('/', authenticateToken, async (req, res) => {
     try {
-        const types = await prisma.restorationType.findMany({
-            orderBy: { name: 'asc' }
-        });
+        const types = await prisma.restorationType.findMany({ orderBy: { name: 'asc' } });
         res.json(types);
     } catch (error) {
         console.error(error);
@@ -16,20 +15,12 @@ router.get('/', async (req, res) => {
     }
 });
 
-// Добавить новый тип
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
     try {
         const { name, priceUSD } = req.body;
-
-        if (!name) {
-            return res.status(400).json({ error: 'Название обязательно' });
-        }
-
+        if (!name) return res.status(400).json({ error: 'Название обязательно' });
         const newType = await prisma.restorationType.create({
-            data: {
-                name,
-                priceUSD: parseFloat(priceUSD) || 0
-            }
+            data: { name, priceUSD: parseFloat(priceUSD) || 0 }
         });
         res.status(201).json(newType);
     } catch (error) {
@@ -41,16 +32,12 @@ router.post('/', async (req, res) => {
     }
 });
 
-// Обновить цену типа (или название)
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticateToken, async (req, res) => {
     try {
         const { name, priceUSD } = req.body;
         const updatedType = await prisma.restorationType.update({
             where: { id: parseInt(req.params.id) },
-            data: {
-                name,
-                priceUSD: parseFloat(priceUSD) || 0
-            }
+            data: { name, priceUSD: parseFloat(priceUSD) || 0 }
         });
         res.json(updatedType);
     } catch (error) {
@@ -59,12 +46,10 @@ router.put('/:id', async (req, res) => {
     }
 });
 
-// Удалить тип
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Нет доступа' });
     try {
-        await prisma.restorationType.delete({
-            where: { id: parseInt(req.params.id) }
-        });
+        await prisma.restorationType.delete({ where: { id: parseInt(req.params.id) } });
         res.json({ message: 'Успешно удалено' });
     } catch (error) {
         console.error(error);
@@ -72,29 +57,22 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
-// Инициализация дефолтных типов (Seed)
-router.post('/seed', async (req, res) => {
+router.post('/seed', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Нет доступа' });
     try {
         const existing = await prisma.restorationType.count();
-        if (existing > 0) {
-            return res.json({ message: 'База уже содержит типы реставраций' });
-        }
-
+        if (existing > 0) return res.json({ message: 'База уже содержит типы реставраций' });
         const defaultTypes = [
             { name: 'Коронка Emax', priceUSD: 15 },
             { name: 'Коронка из диоксида циркония', priceUSD: 18 },
             { name: 'Винир Emax', priceUSD: 16 },
             { name: 'Вкладка керамическая', priceUSD: 14 }
         ];
-
-        await prisma.restorationType.createMany({
-            data: defaultTypes
-        });
-
+        await prisma.restorationType.createMany({ data: defaultTypes });
         res.json({ message: 'Базовые типы успешно добавлены' });
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: 'Ошбика заполнения базы типов' });
+        res.status(500).json({ error: 'Ошибка заполнения базы типов' });
     }
 });
 

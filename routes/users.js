@@ -1,12 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../lib/prisma'); // BUG FIX #1: singleton
 const authenticateToken = require('../middleware/auth');
 
-const prisma = new PrismaClient();
-
-// GET /api/users — список всех пользователей (только admin)
 router.get('/', authenticateToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ error: 'Нет доступа' });
     try {
@@ -19,7 +16,6 @@ router.get('/', authenticateToken, async (req, res) => {
     }
 });
 
-// POST /api/users — создать пользователя (только admin)
 router.post('/', authenticateToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ error: 'Нет доступа' });
     const { name, emailOrPhone, password, role } = req.body;
@@ -36,7 +32,6 @@ router.post('/', authenticateToken, async (req, res) => {
     }
 });
 
-// PUT /api/users/:id — обновить пользователя (только admin)
 router.put('/:id', authenticateToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ error: 'Нет доступа' });
     const { name, role, password } = req.body;
@@ -56,7 +51,6 @@ router.put('/:id', authenticateToken, async (req, res) => {
     }
 });
 
-// DELETE /api/users/:id — удалить пользователя (только admin, нельзя себя)
 router.delete('/:id', authenticateToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ error: 'Нет доступа' });
     if (req.user.userId === parseInt(req.params.id)) return res.status(400).json({ error: 'Нельзя удалить себя' });
